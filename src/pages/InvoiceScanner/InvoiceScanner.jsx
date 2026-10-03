@@ -161,15 +161,14 @@ export default function InvoiceScanner({
     setScanning(true);
     setScanned(false);
 
-    setTimeout(() => {
-      setItems(demoItems);
-      setScanning(false);
-      setScanned(true);
-
-      setMessage(
-        "Invoice scanned successfully!"
-      );
-    }, 1800);
+    // Demo mode is intentional until the backend Gemini vision
+    // endpoint is available. Do not fake a delayed API response.
+    setItems(demoItems);
+    setScanning(false);
+    setScanned(true);
+    setMessage(
+      "Demo scan completed. Backend invoice OCR is not connected yet."
+    );
   };
 
   /* =======================================================

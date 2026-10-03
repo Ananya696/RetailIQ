@@ -1,4 +1,5 @@
 import { useMemo, useRef, useState } from "react";
+import { api } from "../../api";
 
 import {
   ArrowUp,
@@ -542,24 +543,44 @@ export default function AIAssistant({
     setInput("");
     setIsTyping(true);
 
-    window.setTimeout(() => {
-      const response = generateResponse(
-        question,
-        context
-      );
+    const askAssistant = async () => {
+      try {
+        const data = await api("/api/assistant", {
+          method: "POST",
+          body: { question },
+        });
 
-      setMessages((current) => [
-        ...current,
-        {
-          id: `assistant-${messageIdRef.current++}`,
-          role: "assistant",
-          text: response.text,
-          chips: response.chips,
-        },
-      ]);
+        const answer =
+          data.answer ||
+          data.response ||
+          data.message ||
+          "I couldn't generate an answer right now. Please try again.";
 
-      setIsTyping(false);
-    }, 700);
+        setMessages((current) => [
+          ...current,
+          {
+            id: `assistant-${messageIdRef.current++}`,
+            role: "assistant",
+            text: String(answer),
+            chips: [],
+          },
+        ]);
+      } catch (error) {
+        setMessages((current) => [
+          ...current,
+          {
+            id: `assistant-error-${messageIdRef.current++}`,
+            role: "assistant",
+            text: `Sorry, I couldn't reach the RetailIQ AI service. ${error.message || "Please try again."}`,
+            chips: ["Try again"],
+          },
+        ]);
+      } finally {
+        setIsTyping(false);
+      }
+    };
+
+    askAssistant();
   };
 
   /* =========================================================

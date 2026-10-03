@@ -480,19 +480,21 @@ function AppContent() {
 
       <Route
         path="/employees"
-        element={pageLayout(<Employees />)}
+        element={<RoleProtectedRoute blockedRoles={["Employee"]}>{pageLayout(<Employees />)}</RoleProtectedRoute>}
       />
 
       <Route
         path="/analytics"
-        element={pageLayout(
-          <Analytics sales={sales} products={products} />
-        )}
+        element={
+          <RoleProtectedRoute blockedRoles={["Employee"]}>
+            {pageLayout(<Analytics sales={sales} products={products} />)}
+          </RoleProtectedRoute>
+        }
       />
 
       <Route
         path="/settings"
-        element={pageLayout(<Settings />)}
+        element={<RoleProtectedRoute blockedRoles={["Employee"]}>{pageLayout(<Settings />)}</RoleProtectedRoute>}
       />
 
       <Route
@@ -501,6 +503,14 @@ function AppContent() {
       />
     </Routes>
   );
+}
+
+
+function RoleProtectedRoute({ children, blockedRoles = [] }) {
+  const role = String(session.user?.role || "").toLowerCase();
+  const blocked = blockedRoles.map((item) => String(item).toLowerCase());
+  if (blocked.includes(role)) return <Navigate to="/dashboard" replace />;
+  return children;
 }
 
 function ProtectedApp() {
