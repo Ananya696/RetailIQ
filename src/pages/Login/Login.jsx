@@ -1,4 +1,44 @@
+import { useState } from "react";
+import { api, session } from "../../api";
+
 function Login({ onLogin, onSignup }) {
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+
+  const handleLogin = async (e) => {
+    e.preventDefault();
+
+    setError("");
+
+    if (!email.trim() || !password) {
+      setError("Please enter your email and password.");
+      return;
+    }
+
+    try {
+      setLoading(true);
+
+      const data = await api("/api/login", {
+        method: "POST",
+        body: {
+          email: email.trim(),
+          password,
+        },
+      });
+
+      session.save(data.token, data.user);
+
+      onLogin(data.user);
+    } catch (err) {
+      setError(err.message || "Login failed. Please try again.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
   return (
     <div className="retailiq-app min-h-screen flex items-center justify-center p-6">
 
@@ -56,114 +96,145 @@ function Login({ onLogin, onSignup }) {
           Welcome back! Please login to continue.
         </p>
 
-        {/* ================= EMAIL ================= */}
-        <label className="block text-sm font-medium text-white/90 mb-2">
-          Email Address
-        </label>
-
-        <input
-          type="email"
-          placeholder="Enter your email"
-          className="
-            w-full
-            bg-white/10
-            text-white
-            placeholder:text-white/50
-
-            border border-white/20
-            rounded-xl
-            p-3
-            mb-5
-
-            transition-all
-            duration-300
-
-            focus:outline-none
-            focus:ring-2
-            focus:ring-blue-400
-            focus:border-blue-400
-
-            hover:bg-white/15
-            hover:border-white/40
-          "
-        />
-
-        {/* ================= PASSWORD ================= */}
-        <label className="block text-sm font-medium text-white/90 mb-2">
-          Password
-        </label>
-
-        <input
-          type="password"
-          placeholder="Enter your password"
-          className="
-            w-full
-            bg-white/10
-            text-white
-            placeholder:text-white/50
-
-            border border-white/20
-            rounded-xl
-            p-3
-            mb-3
-
-            transition-all
-            duration-300
-
-            focus:outline-none
-            focus:ring-2
-            focus:ring-blue-400
-            focus:border-blue-400
-
-            hover:bg-white/15
-            hover:border-white/40
-          "
-        />
-
-        {/* ================= FORGOT PASSWORD ================= */}
-        <div className="text-right mb-6">
-          <button
-            type="button"
+        {/* ================= ERROR ================= */}
+        {error && (
+          <div
             className="
-              text-blue-300
+              mb-5
+              p-3
+              rounded-xl
+              bg-red-500/15
+              border border-red-400/30
+              text-red-200
               text-sm
-              hover:text-blue-200
-              hover:underline
-              transition
+              text-center
             "
           >
-            Forgot Password?
+            {error}
+          </div>
+        )}
+
+        <form onSubmit={handleLogin}>
+
+          {/* ================= EMAIL ================= */}
+          <label className="block text-sm font-medium text-white/90 mb-2">
+            Email Address
+          </label>
+
+          <input
+            type="email"
+            placeholder="Enter your email"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            className="
+              w-full
+              bg-white/10
+              text-white
+              placeholder:text-white/50
+
+              border border-white/20
+              rounded-xl
+              p-3
+              mb-5
+
+              transition-all
+              duration-300
+
+              focus:outline-none
+              focus:ring-2
+              focus:ring-blue-400
+              focus:border-blue-400
+
+              hover:bg-white/15
+              hover:border-white/40
+            "
+          />
+
+          {/* ================= PASSWORD ================= */}
+          <label className="block text-sm font-medium text-white/90 mb-2">
+            Password
+          </label>
+
+          <input
+            type="password"
+            placeholder="Enter your password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            className="
+              w-full
+              bg-white/10
+              text-white
+              placeholder:text-white/50
+
+              border border-white/20
+              rounded-xl
+              p-3
+              mb-3
+
+              transition-all
+              duration-300
+
+              focus:outline-none
+              focus:ring-2
+              focus:ring-blue-400
+              focus:border-blue-400
+
+              hover:bg-white/15
+              hover:border-white/40
+            "
+          />
+
+          {/* ================= FORGOT PASSWORD ================= */}
+          <div className="text-right mb-6">
+            <button
+              type="button"
+              className="
+                text-blue-300
+                text-sm
+                hover:text-blue-200
+                hover:underline
+                transition
+              "
+            >
+              Forgot Password?
+            </button>
+          </div>
+
+          {/* ================= LOGIN BUTTON ================= */}
+          <button
+            type="submit"
+            disabled={loading}
+            className="
+              w-full
+              bg-blue-600
+              text-white
+              py-3
+              rounded-xl
+
+              font-semibold
+
+              shadow-lg
+              shadow-blue-900/30
+
+              transition-all
+              duration-300
+
+              hover:bg-blue-500
+              hover:shadow-xl
+              hover:shadow-blue-500/30
+              hover:-translate-y-1
+
+              active:scale-95
+
+              disabled:opacity-60
+              disabled:cursor-not-allowed
+              disabled:hover:translate-y-0
+            "
+          >
+            {loading ? "Logging in..." : "Login"}
           </button>
-        </div>
 
-        {/* ================= LOGIN BUTTON ================= */}
-        <button
-          onClick={onLogin}
-          className="
-            w-full
-            bg-blue-600
-            text-white
-            py-3
-            rounded-xl
-
-            font-semibold
-
-            shadow-lg
-            shadow-blue-900/30
-
-            transition-all
-            duration-300
-
-            hover:bg-blue-500
-            hover:shadow-xl
-            hover:shadow-blue-500/30
-            hover:-translate-y-1
-
-            active:scale-95
-          "
-        >
-          Login
-        </button>
+        </form>
 
         {/* ================= SIGN UP ================= */}
         <p className="text-center mt-6 text-white/70">

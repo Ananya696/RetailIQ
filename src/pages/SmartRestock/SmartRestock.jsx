@@ -1,4 +1,5 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { api } from "../../api";
 import {
   AlertTriangle,
   ArrowDownRight,
@@ -16,72 +17,6 @@ import {
   Zap,
 } from "lucide-react";
 
-const fallbackProducts = [
-  {
-    id: 1,
-    name: "Laptop",
-    category: "Electronics",
-    supplier: "Tech World",
-    price: 55000,
-    stock: 12,
-  },
-  {
-    id: 2,
-    name: "Wireless Mouse",
-    category: "Accessories",
-    supplier: "Digital Hub",
-    price: 799,
-    stock: 5,
-  },
-  {
-    id: 3,
-    name: "Keyboard",
-    category: "Accessories",
-    supplier: "Digital Hub",
-    price: 1299,
-    stock: 0,
-  },
-  {
-    id: 4,
-    name: "Headphones",
-    category: "Electronics",
-    supplier: "Tech World",
-    price: 2499,
-    stock: 24,
-  },
-];
-
-const fallbackSales = [
-  {
-    id: "S001",
-    product: "Laptop",
-    quantity: 1,
-    price: 55000,
-    total: 55000,
-  },
-  {
-    id: "S002",
-    product: "Wireless Mouse",
-    quantity: 2,
-    price: 799,
-    total: 1598,
-  },
-  {
-    id: "S003",
-    product: "Headphones",
-    quantity: 1,
-    price: 2499,
-    total: 2499,
-  },
-  {
-    id: "S004",
-    product: "Keyboard",
-    quantity: 2,
-    price: 1299,
-    total: 2598,
-  },
-];
-
 const currency = (value) =>
   `₹${Number(value || 0).toLocaleString("en-IN", {
     maximumFractionDigits: 0,
@@ -91,16 +26,6 @@ const formatNumber = (value) =>
   Number(value || 0).toLocaleString("en-IN", {
     maximumFractionDigits: 0,
   });
-
-const getProductName = (sale) =>
-  sale?.productName ||
-  sale?.product ||
-  sale?.product_name ||
-  sale?.name ||
-  "";
-
-const getQuantity = (sale) =>
-  Number(sale?.quantity ?? sale?.qty ?? sale?.units ?? 0);
 
 /* =========================================================
    PRIORITY BADGE
@@ -296,21 +221,56 @@ function SectionHeader({ icon: Icon, title, subtitle }) {
 
 export default function SmartRestock({
   products = [],
-  sales = [],
   onGeneratePurchaseOrder,
 }) {
-  const [period, setPeriod] = useState(30);
+  const [period, setPeriod] = useState(7);
   const [category, setCategory] = useState("All");
   const [priorityFilter, setPriorityFilter] = useState("All");
   const [generated, setGenerated] = useState(false);
+  const [restockData, setRestockData] = useState([]);
+  const [restockLoading, setRestockLoading] = useState(false);
+  const [restockError, setRestockError] = useState("");
 
-  const safeProducts = products.length
-    ? products
-    : fallbackProducts;
+  /* =========================================================
+     RESTOCK RECOMMENDATIONS FROM ML API
+  ========================================================= */
 
-  const safeSales = sales.length
-    ? sales
-    : fallbackSales;
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadRecommendations = async () => {
+      setRestockLoading(true);
+      setRestockError("");
+
+      try {
+        const data = await api("/api/restock-recommendations");
+        if (!cancelled) {
+          setRestockData(
+            Array.isArray(data)
+              ? data
+              : data.recommendations || []
+          );
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setRestockError(
+            error.message || "Failed to load restock recommendations."
+          );
+          setRestockData([]);
+        }
+      } finally {
+        if (!cancelled) setRestockLoading(false);
+      }
+    };
+
+    loadRecommendations();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const safeProducts = products;
 
   /* =========================================================
      CATEGORIES
@@ -328,112 +288,63 @@ export default function SmartRestock({
   }, [safeProducts]);
 
   /* =========================================================
-     RESTOCK RECOMMENDATIONS
+     MAP API RESPONSE TO EXISTING UI
   ========================================================= */
 
   const recommendations = useMemo(() => {
-    return safeProducts.map((product, index) => {
-      const productSales = safeSales.filter(
-        (sale) =>
-          getProductName(sale).toLowerCase() ===
-          String(product.name).toLowerCase()
+    return restockData.map((item) => {
+      const product = safeProducts.find(
+        (candidate) =>
+          Number(candidate.id) === Number(item.productId)
       );
-
-      const totalSold = productSales.reduce(
-        (sum, sale) => sum + getQuantity(sale),
-        0
-      );
-
-      const averageSale =
-        productSales.length > 0
-          ? totalSold / productSales.length
-          : 0.4;
-
-      const demandFactor =
-        period === 7
-          ? 1
-          : period === 30
-          ? 4.1
-          : 12.5;
 
       const predictedDemand = Math.max(
-        1,
-        Math.ceil(averageSale * demandFactor)
+        0,
+        Number(item.predictedDemand || 0)
       );
-
-      const dailyDemand = Math.max(
-        0.25,
-        predictedDemand / period
+      const currentStock = Math.max(
+        0,
+        Number(item.currentStock || 0)
       );
-
-      const currentStock = Number(product.stock || 0);
-
-      const safetyStock = Math.max(
-        2,
-        Math.ceil(dailyDemand * 5)
-      );
-
-      const reorderPoint = Math.ceil(
-        dailyDemand * 7 + safetyStock
-      );
-
       const recommendedQuantity = Math.max(
         0,
-        Math.ceil(
-          predictedDemand +
-            safetyStock -
-            currentStock
-        )
+        Number(item.recommendedRestock || 0)
       );
 
+      // Display-only values derived from the API response.
+      const dailyDemand = predictedDemand / 7;
       const stockCover =
-        currentStock > 0
+        dailyDemand > 0
           ? Math.floor(currentStock / dailyDemand)
           : 0;
 
       let priority = "Low";
-
       if (currentStock === 0 || stockCover <= 2) {
         priority = "Critical";
-      } else if (
-        stockCover <= 7 ||
-        recommendedQuantity >= predictedDemand * 0.75
-      ) {
+      } else if (stockCover <= 7 || recommendedQuantity > 0) {
         priority = "High";
-      } else if (
-        stockCover <= 14 ||
-        recommendedQuantity > 0
-      ) {
+      } else if (stockCover <= 14) {
         priority = "Medium";
       }
 
-      const confidence = Math.min(
-        96,
-        Math.max(
-          76,
-          82 + productSales.length * 3 - index
-        )
-      );
-
-      const estimatedCost =
-        recommendedQuantity *
-        Number(product.price || 0);
+      const price = Number(product?.price || 0);
 
       return {
-        ...product,
-        totalSold,
+        ...(product || {}),
+        id: item.productId ?? product?.id ?? item.name,
+        name: item.name || product?.name || "Unknown Product",
+        category: product?.category || "Other",
+        supplier: product?.supplier || "Supplier not assigned",
         predictedDemand,
-        dailyDemand,
         currentStock,
-        reorderPoint,
         recommendedQuantity,
+        dailyDemand,
         stockCover,
-        confidence,
-        estimatedCost,
+        estimatedCost: recommendedQuantity * price,
         priority,
       };
     });
-  }, [safeProducts, safeSales, period]);
+  }, [restockData, safeProducts]);
 
   /* =========================================================
      FILTERS
@@ -772,7 +683,7 @@ export default function SmartRestock({
           "
         >
           <div className="flex flex-wrap items-center gap-2">
-            {[7, 30, 90].map((value) => (
+            {[7].map((value) => (
               <button
                 key={value}
                 onClick={() => setPeriod(value)}
@@ -1075,7 +986,7 @@ export default function SmartRestock({
                   "
                 >
                   {stats.units > 0
-                    ? `Based on the selected forecast window, RetailIQ recommends ordering ${formatNumber(
+                    ? `Based on the ML restock recommendation, RetailIQ recommends ordering ${formatNumber(
                         stats.units
                       )} units with an estimated purchase value of ${currency(
                         stats.cost
@@ -1133,10 +1044,24 @@ export default function SmartRestock({
           <SectionHeader
             icon={ShoppingCart}
             title="Recommended Restock Plan"
-            subtitle="Prioritized purchase recommendations from demand and current stock"
+            subtitle="Prioritized purchase recommendations from the RetailIQ ML service"
           />
 
-          {filteredRecommendations.length === 0 ? (
+          {restockLoading ? (
+            <div className="rounded-2xl border border-dashed border-slate-200 p-10 text-center">
+              <RefreshCw className="mx-auto animate-spin text-blue-500" size={30} />
+              <p className="mt-3 text-sm font-bold text-slate-700">
+                Loading restock recommendations...
+              </p>
+            </div>
+          ) : restockError ? (
+            <div className="rounded-2xl border border-rose-200 bg-rose-50 p-6 text-center">
+              <AlertTriangle className="mx-auto text-rose-500" size={30} />
+              <p className="mt-3 text-sm font-bold text-rose-700">
+                {restockError}
+              </p>
+            </div>
+          ) : filteredRecommendations.length === 0 ? (
             <div
               className="
                 rounded-2xl
@@ -1564,8 +1489,7 @@ export default function SmartRestock({
               className="text-blue-500"
             />
 
-            Recommendations update automatically
-            when forecast period or filters change.
+            Recommendations are loaded from the RetailIQ ML service.
           </span>
 
           <span className="font-medium text-slate-400">

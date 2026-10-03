@@ -1,4 +1,5 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { api, toUiSale } from "../../api";
 
 function Sales({ products, sales, setSales, updateProductStock }) {
   const [searchTerm, setSearchTerm] = useState("");
@@ -20,6 +21,37 @@ function Sales({ products, sales, setSales, updateProductStock }) {
     quantity: 1,
     payment: "UPI",
   });
+
+  const [loadingSales, setLoadingSales] = useState(false);
+  const [salesError, setSalesError] = useState("");
+
+  // ==================================================
+  // LOAD SALES FROM BACKEND
+  // ==================================================
+
+  useEffect(() => {
+    const loadSales = async () => {
+      try {
+        setLoadingSales(true);
+        setSalesError("");
+
+        const data = await api("/api/sales");
+
+        const saleList = Array.isArray(data)
+          ? data
+          : data.sales || [];
+
+        setSales(saleList.map(toUiSale));
+      } catch (error) {
+        console.error("Failed to load sales:", error);
+        setSalesError(error.message || "Failed to load sales.");
+      } finally {
+        setLoadingSales(false);
+      }
+    };
+
+    loadSales();
+  }, [setSales]);
 
   // ==================================================
   // SELECTED PRODUCT
@@ -269,17 +301,22 @@ function Sales({ products, sales, setSales, updateProductStock }) {
   // ADD / EDIT SALE
   // ==================================================
 
-  const handleAddSale = (e) => {
+  const handleAddSale = async (e) => {
     e.preventDefault();
+
+    if (editingSale) {
+      alert(
+        "Editing existing sales is not available in the current backend API. You can add new sales normally."
+      );
+      return;
+    }
 
     if (!newSale.product) {
       alert("Please select a product.");
       return;
     }
 
-    const quantity = Number(
-      newSale.quantity
-    );
+    const quantity = Number(newSale.quantity);
 
     if (!quantity || quantity <= 0) {
       alert("Please enter a valid quantity.");
@@ -291,128 +328,41 @@ function Sales({ products, sales, setSales, updateProductStock }) {
       return;
     }
 
-    const availableStock =
-      Number(selectedProduct.stock || 0) +
-      (editingSale &&
-      editingSale.product ===
-        selectedProduct.name
-        ? Number(editingSale.quantity)
-        : 0);
+    const availableStock = Number(selectedProduct.stock || 0);
 
     if (quantity > availableStock) {
-      alert(
-        `Only ${availableStock} units are available.`
-      );
+      alert(`Only ${availableStock} units are available.`);
       return;
     }
 
-    const formattedDate =
-      new Date().toLocaleDateString(
-        "en-IN",
-        {
-          day: "2-digit",
-          month: "short",
-          year: "numeric",
-        }
-      );
+    try {
+      const data = await api("/api/sales", {
+        method: "POST",
+        body: {
+          productId: selectedProduct.id,
+          quantitySold: quantity,
+          salePrice: Number(selectedProduct.price || 0),
+          paymentMethod: newSale.payment,
+        },
+      });
 
-    // EDIT
-    if (editingSale) {
-      const oldProduct = products.find(
-        (product) =>
-          product.name ===
-          editingSale.product
-      );
-
-      if (oldProduct) {
-        updateProductStock(
-          oldProduct.id,
-          Number(editingSale.quantity)
-        );
-      }
-
-      updateProductStock(
-        selectedProduct.id,
-        -quantity
-      );
-
-      setSales((current) =>
-        current.map((sale) =>
-          sale.id === editingSale.id
-            ? {
-                ...sale,
-                product:
-                  selectedProduct.name,
-                quantity,
-                price:
-                  selectedProduct.price,
-                total:
-                  quantity *
-                  selectedProduct.price,
-                payment:
-                  newSale.payment,
-                date: formattedDate,
-                inventoryAdjusted: true,
-              }
-            : sale
-        )
-      );
-    } else {
-      // ADD
-      const numericIds = sales
-        .map((sale) =>
-          Number(
-            String(sale.id).replace(
-              /\D/g,
-              ""
-            )
-          )
-        )
-        .filter(Boolean);
-
-      const nextId = numericIds.length
-        ? Math.max(...numericIds) + 1
-        : 1;
-
-      const sale = {
-        id: `S${String(nextId).padStart(
-          3,
-          "0"
-        )}`,
-
-        product:
-          selectedProduct.name,
-
-        quantity,
-
-        price:
-          selectedProduct.price,
-
-        total:
-          quantity *
-          selectedProduct.price,
-
-        payment:
-          newSale.payment,
-
-        date: formattedDate,
-
-        inventoryAdjusted: true,
-      };
+      const createdSale = data.sale || data;
 
       setSales((current) => [
-        sale,
+        toUiSale(createdSale),
         ...current,
       ]);
 
-      updateProductStock(
-        selectedProduct.id,
-        -quantity
-      );
-    }
+      setShowModal(false);
+      resetSaleForm();
 
-    setShowModal(false);
-    resetSaleForm();
+      // The backend decrements stock atomically when the sale is created.
+      // Refresh the product stock shown in the UI without changing it twice.
+      window.dispatchEvent(new CustomEvent("retailiq:sale-created"));
+    } catch (error) {
+      console.error("Failed to create sale:", error);
+      alert(error.message || "Failed to create sale.");
+    }
   };
 
   // ==================================================
@@ -422,29 +372,9 @@ function Sales({ products, sales, setSales, updateProductStock }) {
   const confirmDelete = () => {
     if (!deletingSale) return;
 
-    setSales((current) =>
-      current.filter(
-        (sale) =>
-          sale.id !== deletingSale.id
-      )
+    alert(
+      "Deleting sales is not available in the current backend API because sales history is preserved for forecasting."
     );
-
-    if (deletingSale.inventoryAdjusted) {
-      const product = products.find(
-        (item) =>
-          item.name ===
-          deletingSale.product
-      );
-
-      if (product) {
-        updateProductStock(
-          product.id,
-          Number(
-            deletingSale.quantity
-          )
-        );
-      }
-    }
 
     setDeletingSale(null);
     setShowDeleteModal(false);
@@ -1342,6 +1272,12 @@ function Sales({ products, sales, setSales, updateProductStock }) {
           </div>
         </section>
 
+        {salesError && (
+          <div className="mb-4 rounded-xl border border-amber-300/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-100">
+            {salesError}
+          </div>
+        )}
+
         {/* RESULTS */}
 
         <div
@@ -1354,11 +1290,17 @@ function Sales({ products, sales, setSales, updateProductStock }) {
           "
         >
           <p className="text-sm text-white/70">
-            Showing{" "}
-            <span className="font-bold text-white">
-              {filteredSales.length}
-            </span>{" "}
-            sales
+            {loadingSales
+              ? "Loading sales..."
+              : (
+                <>
+                  Showing{" "}
+                  <span className="font-bold text-white">
+                    {filteredSales.length}
+                  </span>{" "}
+                  sales
+                </>
+              )}
           </p>
 
           {(searchTerm ||
@@ -1584,7 +1526,7 @@ function Sales({ products, sales, setSales, updateProductStock }) {
 
                 <p className="mt-1 text-sm text-white/50">
                   {editingSale
-                    ? "Update the transaction details."
+                    ? "Editing is currently unavailable because the backend exposes sales creation only."
                     : "Record a new customer transaction."}
                 </p>
               </div>
@@ -1754,6 +1696,7 @@ function Sales({ products, sales, setSales, updateProductStock }) {
 
                 <button
                   type="submit"
+                  disabled={Boolean(editingSale)}
                   className="
                     flex-1
                     rounded-xl
@@ -1766,12 +1709,14 @@ function Sales({ products, sales, setSales, updateProductStock }) {
                     shadow-blue-900/30
 
                     hover:bg-blue-500
+                    disabled:cursor-not-allowed
+                    disabled:opacity-50
 
                     transition
                   "
                 >
                   {editingSale
-                    ? "Save Changes"
+                    ? "Editing Unavailable"
                     : "Add Sale"}
                 </button>
               </div>

@@ -1,4 +1,5 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { api } from "../../api";
 import {
   ArrowDownRight,
   ArrowUpRight,
@@ -24,10 +25,10 @@ import {
   Props:
     products: shared inventory products from App.jsx
     sales: shared sales data from App.jsx
+    onGenerateRestock: optional callback kept for the existing UI
 
-  This version is frontend-only and ML-ready.
-  The forecast is generated from recent sales history so the UI works
-  before the backend/ML model is connected.
+  Forecast values come from the backend ML API required by the
+  RetailIQ integration guide. The existing UI is preserved.
 */
 
 const PERIODS = {
@@ -35,80 +36,6 @@ const PERIODS = {
   30: { label: "30 Days", multiplier: 1 },
   90: { label: "90 Days", multiplier: 1 },
 };
-
-const fallbackProducts = [
-  {
-    id: 1,
-    name: "Laptop",
-    category: "Electronics",
-    shop: "Tech World",
-    price: 55000,
-    stock: 12,
-  },
-  {
-    id: 2,
-    name: "Wireless Mouse",
-    category: "Accessories",
-    shop: "Digital Hub",
-    price: 799,
-    stock: 5,
-  },
-  {
-    id: 3,
-    name: "Keyboard",
-    category: "Accessories",
-    shop: "Digital Hub",
-    price: 1299,
-    stock: 0,
-  },
-  {
-    id: 4,
-    name: "Headphones",
-    category: "Electronics",
-    shop: "Tech World",
-    price: 2499,
-    stock: 24,
-  },
-];
-
-const fallbackSales = [
-  {
-    id: "S001",
-    product: "Laptop",
-    quantity: 1,
-    price: 55000,
-    total: 55000,
-    payment: "UPI",
-    date: "11 Sep 2026",
-  },
-  {
-    id: "S002",
-    product: "Wireless Mouse",
-    quantity: 2,
-    price: 799,
-    total: 1598,
-    payment: "Cash",
-    date: "10 Sep 2026",
-  },
-  {
-    id: "S003",
-    product: "Headphones",
-    quantity: 1,
-    price: 2499,
-    total: 2499,
-    payment: "Card",
-    date: "09 Sep 2026",
-  },
-  {
-    id: "S004",
-    product: "Keyboard",
-    quantity: 2,
-    price: 1299,
-    total: 2598,
-    payment: "UPI",
-    date: "08 Sep 2026",
-  },
-];
 
 const currency = (value) =>
   `₹${Number(value || 0).toLocaleString("en-IN", {
@@ -535,6 +462,14 @@ function RiskBadge({ status }) {
 ========================================================= */
 
 function ConfidenceBadge({ value }) {
+  if (value == null) {
+    return (
+      <span className="inline-flex rounded-full bg-slate-100 px-2.5 py-1 text-[11px] font-semibold text-slate-500">
+        Confidence unavailable
+      </span>
+    );
+  }
+
   const strong = value >= 85;
 
   return (
@@ -570,12 +505,61 @@ export default function Forecast({
   const [period, setPeriod] = useState(30);
   const [category, setCategory] = useState("All");
   const [generated, setGenerated] = useState(false);
+  const [forecastData, setForecastData] = useState({});
+  const [forecastLoading, setForecastLoading] = useState(false);
+  const [forecastError, setForecastError] = useState("");
 
-  const safeProducts =
-    products.length ? products : fallbackProducts;
+  const safeProducts = products;
+  const safeSales = sales;
 
-  const safeSales =
-    sales.length ? sales : fallbackSales;
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadForecasts = async () => {
+      if (!safeProducts.length) {
+        setForecastData({});
+        return;
+      }
+
+      try {
+        setForecastLoading(true);
+        setForecastError("");
+
+        const results = await Promise.all(
+          safeProducts.map(async (product) => {
+            const data = await api(
+              `/api/forecast/${product.id}?days=${period}`
+            );
+
+            return [product.id, data];
+          })
+        );
+
+        if (!cancelled) {
+          setForecastData(Object.fromEntries(results));
+        }
+      } catch (error) {
+        console.error("Failed to load forecast:", error);
+
+        if (!cancelled) {
+          setForecastData({});
+          setForecastError(
+            error.message || "Failed to load forecast data."
+          );
+        }
+      } finally {
+        if (!cancelled) {
+          setForecastLoading(false);
+        }
+      }
+    };
+
+    loadForecasts();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [safeProducts, period]);
 
   const categories = useMemo(() => {
     const values = safeProducts
@@ -600,7 +584,7 @@ export default function Forecast({
   );
 
   /* =====================================================
-     PRODUCT FORECAST CALCULATION
+     PRODUCT FORECAST DATA FROM BACKEND ML API
   ===================================================== */
 
   const productForecasts = useMemo(() => {
@@ -610,116 +594,71 @@ export default function Forecast({
           category === "All" ||
           product.category === category
       )
-      .map((product, index) => {
-        const productSales =
-          normalizedSales.filter(
-            (sale) =>
-              sale.productName.toLowerCase() ===
-              String(product.name).toLowerCase()
-          );
-
-        const totalSold =
-          productSales.reduce(
-            (sum, sale) => sum + sale.quantity,
-            0
-          );
-
-        const recentAverage =
-          productSales.length > 0
-            ? totalSold /
-              Math.max(productSales.length, 1)
-            : 0.4;
-
-        /*
-          Demo forecast logic.
-          Replace this with ML API later.
-        */
-
-        const demandFactor =
-          period === 7
-            ? 1
-            : period === 30
-            ? 4.1
-            : 12.5;
-
+      .map((product) => {
+        const response = forecastData[product.id] || {};
         const predictedDemand = Math.max(
-          1,
-          Math.round(
-            recentAverage * demandFactor
-          )
+          0,
+          Number(response.total_demand || 0)
         );
 
-        const dailyDemand = Math.max(
-          0.25,
-          Number(
-            (predictedDemand / period).toFixed(2)
-          )
-        );
-
-        const daysUntilStockout =
-          Number(product.stock || 0) > 0
-            ? Math.round(
-                Number(product.stock) /
-                  dailyDemand
-              )
+        const dailyDemand =
+          period > 0
+            ? Number((predictedDemand / period).toFixed(2))
             : 0;
 
-        const safetyStock = Math.max(
-          2,
-          Math.ceil(dailyDemand * 5)
-        );
+        const currentStock = Number(product.stock || 0);
+
+        const daysUntilStockout =
+          dailyDemand > 0 && currentStock > 0
+            ? Math.round(currentStock / dailyDemand)
+            : currentStock > 0
+            ? period
+            : 0;
 
         const recommendedStock = Math.max(
           0,
-          Math.ceil(
-            predictedDemand +
-              safetyStock -
-              Number(product.stock || 0)
-          )
+          Math.ceil(predictedDemand - currentStock)
         );
 
         let status = "Healthy";
 
-        if (
-          Number(product.stock || 0) <= 0 ||
-          daysUntilStockout <= 3
-        ) {
+        if (currentStock <= 0 || daysUntilStockout <= 3) {
           status = "At Risk";
-        } else if (
-          daysUntilStockout <= 10 ||
-          recommendedStock > 0
-        ) {
+        } else if (daysUntilStockout <= 10 || recommendedStock > 0) {
           status = "Restock Soon";
         }
 
-        const confidence = Math.min(
-          96,
-          Math.max(
-            72,
-            82 +
-              productSales.length * 3 -
-              index
-          )
-        );
-
-        const predictedRevenue =
-          predictedDemand *
-          Number(product.price || 0);
-
         return {
           ...product,
-          totalSold,
+          totalSold: normalizedSales
+            .filter(
+              (sale) =>
+                sale.productName.toLowerCase() ===
+                String(product.name).toLowerCase()
+            )
+            .reduce((sum, sale) => sum + sale.quantity, 0),
           dailyDemand,
           predictedDemand,
-          predictedRevenue,
+          predictedRevenue:
+            predictedDemand * Number(product.price || 0),
           daysUntilStockout,
           recommendedStock,
-          confidence,
+          confidence:
+            response.confidence != null
+              ? Number(response.confidence)
+              : null,
           status,
+          forecastDates: Array.isArray(response.forecast_dates)
+            ? response.forecast_dates
+            : [],
+          forecastValues: Array.isArray(response.forecast)
+            ? response.forecast.map(Number)
+            : [],
         };
       });
   }, [
     safeProducts,
+    forecastData,
     normalizedSales,
     category,
     period,
@@ -757,17 +696,20 @@ export default function Forecast({
         0
       );
 
+    const confidenceValues =
+      productForecasts
+        .map((product) => product.confidence)
+        .filter((value) => Number.isFinite(value));
+
     const confidence =
-      productForecasts.length > 0
+      confidenceValues.length > 0
         ? Math.round(
-            productForecasts.reduce(
-              (sum, product) =>
-                sum + product.confidence,
+            confidenceValues.reduce(
+              (sum, value) => sum + value,
               0
-            ) /
-              productForecasts.length
+            ) / confidenceValues.length
           )
-        : 0;
+        : null;
 
     return {
       predictedDemand,
@@ -795,97 +737,25 @@ export default function Forecast({
   );
 
   /* =====================================================
-     CHART DATA
+     CHART DATA FROM BACKEND FORECAST
   ===================================================== */
 
   const chartData = useMemo(() => {
-    const totalActual =
-      normalizedSales.reduce(
-        (sum, sale) =>
-          sum + sale.quantity,
-        0
-      );
-
-    const dailyActual = Math.max(
-      1,
-      Math.round(
-        totalActual /
-          Math.max(
-            normalizedSales.length,
-            4
-          )
-      )
+    const forecastSeries = productForecasts.find(
+      (product) => product.forecastValues.length > 0
     );
 
-    const labels =
-      period === 7
-        ? [
-            "Mon",
-            "Tue",
-            "Wed",
-            "Thu",
-            "Fri",
-            "Sat",
-            "Sun",
-          ]
-        : period === 30
-        ? [
-            "W1",
-            "W2",
-            "W3",
-            "W4",
-            "Now",
-            "F",
-          ]
-        : [
-            "M1",
-            "M2",
-            "M3",
-            "M4",
-            "M5",
-            "M6",
-            "F",
-          ];
+    if (!forecastSeries) return [];
 
-    return labels.map(
-      (label, index) => {
-        const actual =
-          index < labels.length - 1
-            ? Math.max(
-                0,
-                Math.round(
-                  dailyActual *
-                    (0.75 +
-                      ((index * 13) %
-                        35) /
-                        100)
-                )
-              )
-            : 0;
+    const dates = forecastSeries.forecastDates;
+    const values = forecastSeries.forecastValues;
 
-        const trendBoost =
-          1 + index * 0.045;
-
-        const predicted = Math.max(
-          1,
-          Math.round(
-            dailyActual *
-              trendBoost *
-              (1 +
-                (period === 90
-                  ? 0.08
-                  : 0))
-          )
-        );
-
-        return {
-          label,
-          actual,
-          predicted,
-        };
-      }
-    );
-  }, [normalizedSales, period]);
+    return values.map((predicted, index) => ({
+      label: dates[index] || `Day ${index + 1}`,
+      actual: 0,
+      predicted: Number(predicted || 0),
+    }));
+  }, [productForecasts]);
 
   /* =====================================================
      AI INSIGHT
@@ -980,7 +850,9 @@ export default function Forecast({
           product.predictedDemand,
           product.daysUntilStockout,
           product.recommendedStock,
-          `${product.confidence}%`,
+          product.confidence == null
+            ? "N/A"
+            : `${product.confidence}%`,
           product.status,
         ]
       );
@@ -1452,15 +1324,22 @@ export default function Forecast({
 
           <StatCard
             title="Forecast Confidence"
-            value={`${totals.confidence}%`}
+            value={
+              totals.confidence == null
+                ? "—"
+                : `${totals.confidence}%`
+            }
             subtitle="Current model confidence"
             icon={Target}
             trend={
-              totals.confidence >= 85
+              totals.confidence == null
+                ? "Not provided by API"
+                : totals.confidence >= 85
                 ? "High confidence"
                 : "Moderate"
             }
             trendPositive={
+              totals.confidence != null &&
               totals.confidence >= 85
             }
             iconClass="bg-emerald-50 text-emerald-600"
@@ -1568,9 +1447,17 @@ export default function Forecast({
               }
             />
 
-            <ForecastChart
-              data={chartData}
-            />
+            {forecastLoading ? (
+              <div className="flex h-[330px] items-center justify-center text-sm text-slate-500">
+                Loading forecast...
+              </div>
+            ) : chartData.length > 0 ? (
+              <ForecastChart data={chartData} />
+            ) : (
+              <div className="flex h-[330px] items-center justify-center text-sm text-slate-500">
+                Forecast data will appear here once the API returns a prediction.
+              </div>
+            )}
 
             <div
               className="
@@ -1587,12 +1474,11 @@ export default function Forecast({
               "
             >
               <span className="font-semibold text-indigo-700">
-                Demo mode:
+                ML forecast:
               </span>{" "}
-              forecast values are generated from
-              the available sales history. Your ML
-              forecasting API can replace this
-              calculation later.
+              Values are loaded from the RetailIQ
+              forecasting API for the selected period.
+              {forecastLoading && " Loading..."}
             </div>
           </div>
 
@@ -1761,7 +1647,9 @@ export default function Forecast({
                   </div>
 
                   <p className="mt-1 text-sm font-bold text-slate-900">
-                    {totals.confidence}% across selected products
+                    {totals.confidence == null
+                      ? "Not provided by the forecast API"
+                      : `${totals.confidence}% across selected products`}
                   </p>
                 </div>
               </div>
@@ -1800,6 +1688,12 @@ export default function Forecast({
             </div>
           </div>
         </section>
+
+        {forecastError && (
+          <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+            {forecastError}
+          </div>
+        )}
 
         {/* =================================================
             PRODUCT FORECAST
@@ -1973,9 +1867,7 @@ export default function Forecast({
 
                           <td className="px-3 py-4">
                             <ConfidenceBadge
-                              value={
-                                product.confidence
-                              }
+                              value={product.confidence}
                             />
                           </td>
 
@@ -2310,8 +2202,7 @@ export default function Forecast({
               className="text-indigo-500"
             />
 
-            Forecast engine is frontend-demo ready
-            and structured for backend ML integration.
+            Forecast values are provided by the backend ML service.
           </span>
 
           <span className="font-medium text-slate-400">

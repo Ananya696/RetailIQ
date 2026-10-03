@@ -1,13 +1,23 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import {
+  BrowserRouter,
+  Routes,
+  Route,
+  Navigate,
+  useLocation,
+  useNavigate,
+} from "react-router-dom";
+import { api, session, toUiProduct, toUiSale } from "./api";
 
 import Signup from "./pages/SignUp/SignUp.jsx";
 import Login from "./pages/Login/Login.jsx";
+import SetPassword from "./pages/SetPassword/SetPassword.jsx";
 
 import Navbar from "./assets/components/Navbar/Navbar.jsx";
 import Sidebar from "./assets/components/Sidebar/Sidebar.jsx";
-import StatCard from "./assets/components/StatCard/StatCard.jsx";
 
 import Inventory from "./pages/Inventory/Inventory.jsx";
+import Dashboard from "./pages/Dashboard/Dashboard.jsx";
 import Sales from "./pages/Sales/Sales.jsx";
 import Employees from "./pages/Employee/Employee.jsx";
 import Analytics from "./pages/Analytics/Analytics.jsx";
@@ -19,214 +29,226 @@ import AIAssistant from "./pages/AIAssistant/AIAssistant.jsx";
 import VoiceBilling from "./pages/VoiceBilling/VoiceBilling.jsx";
 import InvoiceScanner from "./pages/InvoiceScanner/InvoiceScanner.jsx";
 
-function App() {
+function AppContent() {
+  const navigate = useNavigate();
+  const location = useLocation();
+
+
   // ==================================================
   // LOGIN STATE
   // ==================================================
 
-  const [isLoggedIn, setIsLoggedIn] = useState(false);
-  const [showSignup, setShowSignup] = useState(false);
-  const [activePage, setActivePage] = useState("dashboard");
+  const [isLoggedIn, setIsLoggedIn] = useState(!!session.token);
 
   // ==================================================
   // SHARED PRODUCT DATA
   // ==================================================
 
-  const [products, setProducts] = useState([
-    {
-      id: 1,
-      name: "Laptop",
-      category: "Electronics",
-      supplier: "Tech World",
-      price: 55000,
-      stock: 12,
-    },
-    {
-      id: 2,
-      name: "Wireless Mouse",
-      category: "Accessories",
-      supplier: "Digital Hub",
-      price: 799,
-      stock: 5,
-    },
-    {
-      id: 3,
-      name: "Keyboard",
-      category: "Accessories",
-      supplier: "Digital Hub",
-      price: 1299,
-      stock: 0,
-    },
-    {
-      id: 4,
-      name: "Headphones",
-      category: "Electronics",
-      supplier: "Tech World",
-      price: 2499,
-      stock: 24,
-    },
-  ]);
+  const [products, setProducts] = useState([]);
 
   // ==================================================
   // SHARED SALES DATA
   // ==================================================
 
-  const [sales, setSales] = useState([
-    {
-      id: "S001",
-      product: "Laptop",
-      quantity: 1,
-      price: 55000,
-      total: 55000,
-      payment: "UPI",
-      date: "11 Sep 2026",
-      inventoryAdjusted: false,
-    },
-    {
-      id: "S002",
-      product: "Wireless Mouse",
-      quantity: 2,
-      price: 799,
-      total: 1598,
-      payment: "Cash",
-      date: "10 Sep 2026",
-      inventoryAdjusted: false,
-    },
-    {
-      id: "S003",
-      product: "Headphones",
-      quantity: 1,
-      price: 2499,
-      total: 2499,
-      payment: "Card",
-      date: "09 Sep 2026",
-      inventoryAdjusted: false,
-    },
-    {
-      id: "S004",
-      product: "Keyboard",
-      quantity: 2,
-      price: 1299,
-      total: 2598,
-      payment: "UPI",
-      date: "08 Sep 2026",
-      inventoryAdjusted: false,
-    },
-  ]);
+  const [sales, setSales] = useState([]);
+
+  // ==================================================
+  // LOAD PRODUCTS + SALES FROM BACKEND
+  // ==================================================
+
+  useEffect(() => {
+    if (!session.token) return;
+
+    const loadData = async () => {
+      try {
+        const [productsData, salesData] = await Promise.all([
+          api("/api/products"),
+          api("/api/sales"),
+        ]);
+
+        const productList = Array.isArray(productsData)
+          ? productsData
+          : productsData.products || [];
+
+        const salesList = Array.isArray(salesData)
+          ? salesData
+          : salesData.sales || [];
+
+        setProducts(productList.map(toUiProduct));
+        setSales(salesList.map(toUiSale));
+      } catch (error) {
+        console.error("Failed to load RetailIQ data:", error);
+      }
+    };
+
+    loadData();
+  }, [isLoggedIn]);
 
   // ==================================================
   // UPDATE PRODUCT STOCK
   // ==================================================
 
-  const updateProductStock = (id, change) => {
-    setProducts((current) =>
-      current.map((product) =>
-        product.id === id
-          ? {
-              ...product,
-              stock: Math.max(
-                0,
-                Number(product.stock || 0) +
-                  Number(change || 0)
-              ),
-            }
-          : product
-      )
-    );
+  const updateProductStock = async (id, change) => {
+    try {
+      const product = products.find((item) => item.id === id);
+      if (!product) return;
+
+      const newQuantity = Math.max(
+        0,
+        Number(product.stock || 0) + Number(change || 0)
+      );
+
+      await api(`/api/stock/${id}`, {
+        method: "PUT",
+        body: { quantity: newQuantity },
+      });
+
+      setProducts((current) =>
+        current.map((item) =>
+          item.id === id
+            ? { ...item, stock: newQuantity }
+            : item
+        )
+      );
+    } catch (error) {
+      console.error("Failed to update stock:", error);
+      alert(error.message);
+    }
   };
 
   // ==================================================
   // ADD PRODUCT
   // ==================================================
 
-  const addProduct = (product) => {
-    setProducts((current) => [
-      ...current,
-      {
-        ...product,
-        id:
-          current.length > 0
-            ? Math.max(
-                ...current.map((item) => item.id)
-              ) + 1
-            : 1,
-      },
-    ]);
+  const addProduct = async (product) => {
+    try {
+      const data = await api("/api/products", {
+        method: "POST",
+        body: {
+          name: product.name,
+          category: product.category,
+          supplier: product.supplier || "",
+          price: Number(product.price || 0),
+          cost: Number(product.cost || product.price || 0),
+          stock: Number(product.stock || 0),
+        },
+      });
+
+      const createdProduct = data.product || data;
+
+      setProducts((current) => [
+        ...current,
+        toUiProduct(createdProduct),
+      ]);
+    } catch (error) {
+      console.error("Failed to add product:", error);
+      alert(error.message);
+    }
   };
 
   // ==================================================
   // UPDATE PRODUCT
   // ==================================================
 
-  const updateProduct = (updatedProduct) => {
-    setProducts((current) =>
-      current.map((product) =>
-        product.id === updatedProduct.id
-          ? {
-              ...product,
-              ...updatedProduct,
-            }
-          : product
-      )
-    );
+  const updateProduct = async (updatedProduct) => {
+    try {
+      const data = await api(
+        `/api/products/${updatedProduct.id}`,
+        {
+          method: "PUT",
+          body: {
+            name: updatedProduct.name,
+            category: updatedProduct.category,
+            supplier: updatedProduct.supplier || "",
+            price: Number(updatedProduct.price || 0),
+            cost: Number(
+              updatedProduct.cost || updatedProduct.price || 0
+            ),
+          },
+        }
+      );
+
+      const returnedProduct = data.product || data;
+
+      setProducts((current) =>
+        current.map((product) =>
+          product.id === updatedProduct.id
+            ? toUiProduct(returnedProduct)
+            : product
+        )
+      );
+    } catch (error) {
+      console.error("Failed to update product:", error);
+      alert(error.message);
+    }
   };
 
   // ==================================================
   // DELETE PRODUCT
   // ==================================================
 
-  const deleteProduct = (id) => {
-    setProducts((current) =>
-      current.filter(
-        (product) => product.id !== id
-      )
-    );
+  const deleteProduct = async (id) => {
+    try {
+      await api(`/api/products/${id}`, {
+        method: "DELETE",
+      });
+
+      setProducts((current) =>
+        current.filter((product) => product.id !== id)
+      );
+    } catch (error) {
+      console.error("Failed to delete product:", error);
+      alert(error.message);
+    }
   };
 
   // ==================================================
   // COMPLETE VOICE BILLING SALE
   // ==================================================
 
-  const completeVoiceSale = (invoice) => {
+  const completeVoiceSale = async (invoice) => {
     if (!invoice?.items?.length) return;
 
-    const saleDate =
-      invoice.date ||
-      new Date().toLocaleDateString("en-IN");
-
-    setSales((currentSales) => {
-      let nextId = currentSales.length + 1;
-
-      const newSales = invoice.items.map((item) => ({
-        id: `S${String(nextId++).padStart(3, "0")}`,
-        product: item.name,
-        quantity: Number(item.quantity || 0),
-        price: Number(item.price || 0),
-        total:
-          Number(item.price || 0) *
-          Number(item.quantity || 0),
-        payment: invoice.payment,
-        date: saleDate,
-        inventoryAdjusted: true,
-      }));
-
-      return [...currentSales, ...newSales];
-    });
-
-    invoice.items.forEach((item) => {
-      const product = products.find(
-        (currentProduct) =>
-          currentProduct.id === item.id ||
-          currentProduct.name === item.name
-      );
-
-      if (product) {
-        updateProductStock(
-          product.id,
-          -Number(item.quantity || 0)
+    try {
+      for (const item of invoice.items) {
+        const product = products.find(
+          (currentProduct) =>
+            currentProduct.id === item.id ||
+            currentProduct.name === item.name
         );
+
+        if (!product) continue;
+
+        await api("/api/sales", {
+          method: "POST",
+          body: {
+            productId: product.id,
+            quantitySold: Number(item.quantity || 0),
+            salePrice: Number(item.price || product.price || 0),
+            paymentMethod: invoice.payment || "Cash",
+          },
+        });
       }
-    });
+
+      const [productsData, salesData] = await Promise.all([
+        api("/api/products"),
+        api("/api/sales"),
+      ]);
+
+      const productList = Array.isArray(productsData)
+        ? productsData
+        : productsData.products || [];
+
+      const salesList = Array.isArray(salesData)
+        ? salesData
+        : salesData.sales || [];
+
+      setProducts(productList.map(toUiProduct));
+      setSales(salesList.map(toUiSale));
+    } catch (error) {
+      console.error("Failed to complete voice sale:", error);
+      alert(error.message);
+    }
   };
 
   // ==================================================
@@ -318,35 +340,7 @@ function App() {
     });
   };
 
-  // ==================================================
-  // LOGIN / SIGNUP
-  // ==================================================
 
-  if (!isLoggedIn) {
-    if (showSignup) {
-      return (
-        <Signup
-          onBackToLogin={() =>
-            setShowSignup(false)
-          }
-          onSignup={() =>
-            setShowSignup(false)
-          }
-        />
-      );
-    }
-
-    return (
-      <Login
-        onLogin={() =>
-          setIsLoggedIn(true)
-        }
-        onSignup={() =>
-          setShowSignup(true)
-        }
-      />
-    );
-  }
 
   // ==================================================
   // COMMON PAGE LAYOUT
@@ -359,11 +353,11 @@ function App() {
       <div className="flex">
         <Sidebar
           activePage={activePage}
-          onNavigate={setActivePage}
+          onNavigate={(page) => navigate(`/${page}`)}
         />
 
         <main
-          key={activePage}
+          key={location.pathname}
           className="
             flex-1
             min-w-0
@@ -376,742 +370,236 @@ function App() {
     </div>
   );
 
-  // ==================================================
-  // INVENTORY PAGE
-  // ==================================================
+  const pathToPage = {
+    "/": "dashboard",
+    "/dashboard": "dashboard",
+    "/inventory": "inventory",
+    "/sales": "sales",
+    "/forecast": "forecast",
+    "/anomalies": "anomalies",
+    "/smart-restock": "smart-restock",
+    "/ai-assistant": "ai-assistant",
+    "/voice-billing": "voice-billing",
+    "/invoice-scanner": "invoice-scanner",
+    "/employees": "employees",
+    "/analytics": "analytics",
+    "/settings": "settings",
+  };
 
-  if (activePage === "inventory") {
-    return pageLayout(
-      <Inventory
-        products={products}
-        updateProductStock={
-          updateProductStock
-        }
-        addProduct={addProduct}
-        updateProduct={updateProduct}
-        deleteProduct={deleteProduct}
-      />
-    );
-  }
-
-  // ==================================================
-  // SALES PAGE
-  // ==================================================
-
-  if (activePage === "sales") {
-    return pageLayout(
-      <Sales
-        products={products}
-        sales={sales}
-        setSales={setSales}
-        updateProductStock={
-          updateProductStock
-        }
-      />
-    );
-  }
-
-  // ==================================================
-  // FORECAST PAGE
-  // ==================================================
-
-  if (activePage === "forecast") {
-    return pageLayout(
-      <Forecast
-        products={products}
-        sales={sales}
-      />
-    );
-  }
-
-  // ==================================================
-  // ANOMALIES PAGE
-  // ==================================================
-
-  if (activePage === "anomalies") {
-    return pageLayout(
-      <Anomalies
-        products={products}
-        sales={sales}
-      />
-    );
-  }
-
-  // ==================================================
-  // SMART RESTOCK PAGE
-  // ==================================================
-
-  if (activePage === "smart-restock") {
-    return pageLayout(
-      <SmartRestock
-        products={products}
-        sales={sales}
-      />
-    );
-  }
-
-  // ==================================================
-  // AI ASSISTANT PAGE
-  // ==================================================
-
-  if (activePage === "ai-assistant") {
-    return pageLayout(
-      <AIAssistant
-        products={products}
-        sales={sales}
-        onNavigate={setActivePage}
-      />
-    );
-  }
-
-  // ==================================================
-  // VOICE BILLING PAGE
-  // ==================================================
-
-  if (activePage === "voice-billing") {
-    return pageLayout(
-      <VoiceBilling
-        products={products}
-        onCompleteSale={
-          completeVoiceSale
-        }
-      />
-    );
-  }
-
-  // ==================================================
-  // INVOICE SCANNER PAGE
-  // ==================================================
-
-  if (activePage === "invoice-scanner") {
-    return pageLayout(
-      <InvoiceScanner
-        onAddToInventory={
-          addInvoiceItemsToInventory
-        }
-      />
-    );
-  }
-
-  // ==================================================
-  // EMPLOYEES PAGE
-  // ==================================================
-
-  if (activePage === "employees") {
-    return pageLayout(<Employees />);
-  }
-
-  // ==================================================
-  // ANALYTICS PAGE
-  // ==================================================
-
-  if (activePage === "analytics") {
-    return pageLayout(
-      <Analytics
-        sales={sales}
-        products={products}
-      />
-    );
-  }
-
-  // ==================================================
-  // SETTINGS PAGE
-  // ==================================================
-
-  if (activePage === "settings") {
-    return pageLayout(<Settings />);
-  }
-
-  // ==================================================
-  // DASHBOARD DATA
-  // ==================================================
-
-  const totalProducts = products.length;
-
-  const totalUnits = products.reduce(
-    (total, product) =>
-      total + Number(product.stock || 0),
-    0
-  );
-
-  const lowStockProducts =
-    products.filter(
-      (product) =>
-        Number(product.stock || 0) > 0 &&
-        Number(product.stock || 0) <= 5
-    ).length;
-
-  const outOfStockProducts =
-    products.filter(
-      (product) =>
-        Number(product.stock || 0) === 0
-    ).length;
-
-  const totalRevenue = sales.reduce(
-    (total, sale) =>
-      total + Number(sale.total || 0),
-    0
-  );
-
-  const totalTransactions = sales.length;
-
-  // ==================================================
-  // DASHBOARD PAGE
-  // ==================================================
+  const activePage = pathToPage[location.pathname] || "dashboard";
 
   return (
-    <div className="retailiq-app min-h-screen">
-
-      {/* NAVBAR */}
-
-      <Navbar />
-
-      <div className="flex">
-
-        {/* SIDEBAR */}
-
-        <Sidebar
-          activePage={activePage}
-          onNavigate={setActivePage}
-        />
-
-        {/* MAIN CONTENT */}
-
-        <main
-          className="
-            flex-1
-            min-w-0
-            p-4
-            sm:p-6
-            lg:p-8
-          "
-        >
-
-          {/* WELCOME */}
-
-          <div className="mb-8">
-
-            <h1
-              className="
-                text-2xl
-                sm:text-3xl
-                font-bold
-                text-white
-              "
-            >
-              Welcome to RetailIQ 👋
-            </h1>
-
-            <p
-              className="
-                text-white/70
-                mt-2
-              "
-            >
-              Here's what's happening with
-              your store today.
-            </p>
-
-          </div>
-
-          {/* STAT CARDS */}
-
-          <div
-            className="
-              grid
-              grid-cols-1
-              sm:grid-cols-2
-              lg:grid-cols-4
-              gap-4
-              lg:gap-6
-            "
-          >
-
-            <StatCard
-              title="Total Sales"
-              value={`₹${totalRevenue.toLocaleString(
-                "en-IN"
-              )}`}
-              subtitle="Revenue from sales"
-            />
-
-            <StatCard
-              title="Orders"
-              value={totalTransactions}
-              subtitle="Recorded transactions"
-            />
-
-            <StatCard
-              title="Products"
-              value={totalProducts}
-              subtitle="Products in inventory"
-            />
-
-            <StatCard
-              title="Employees"
-              value="2"
-              subtitle="Registered staff"
-            />
-
-          </div>
-
-          {/* DASHBOARD SECTIONS */}
-
-          <div
-            className="
-              grid
-              grid-cols-1
-              lg:grid-cols-2
-              gap-6
-              mt-8
-            "
-          >
-
-            {/* ============================= */}
-            {/* SALES OVERVIEW */}
-            {/* ============================= */}
-
-            <div
-              className="
-                bg-white/90
-                backdrop-blur-xl
-                border border-white/40
-                rounded-xl
-                shadow-xl
-                p-6
-                transition-all
-                duration-300
-                hover:shadow-2xl
-                hover:-translate-y-1
-              "
-            >
-
-              <h2
-                className="
-                  text-xl
-                  font-bold
-                  text-gray-800
-                "
-              >
-                Sales Overview
-              </h2>
-
-              <p
-                className="
-                  text-gray-500
-                  text-sm
-                  mt-1
-                "
-              >
-                Current sales performance
-              </p>
-
-              <div
-                className="
-                  mt-6
-                  h-48
-                  flex
-                  items-end
-                  justify-around
-                  gap-3
-                "
-              >
-
-                {[20, 28, 24, 36, 32, 44].map(
-                  (height, index) => (
-                    <div
-                      key={index}
-                      className="
-                        bg-blue-400
-                        w-8
-                        sm:w-10
-                        rounded-t-md
-                        transition-all
-                        duration-300
-                        hover:bg-blue-600
-                        hover:scale-105
-                        cursor-pointer
-                      "
-                      style={{
-                        height: `${height * 4}px`,
-                      }}
-                    />
-                  )
-                )}
-
-              </div>
-
-              <div
-                className="
-                  flex
-                  justify-around
-                  text-sm
-                  text-gray-500
-                  mt-3
-                "
-              >
-                <span>Jan</span>
-                <span>Feb</span>
-                <span>Mar</span>
-                <span>Apr</span>
-                <span>May</span>
-                <span>Jun</span>
-              </div>
-
-            </div>
-
-            {/* ============================= */}
-            {/* INVENTORY OVERVIEW */}
-            {/* ============================= */}
-
-            <div
-              className="
-                bg-white/90
-                backdrop-blur-xl
-                border border-white/40
-                rounded-xl
-                shadow-xl
-                p-6
-                transition-all
-                duration-300
-                hover:shadow-2xl
-                hover:-translate-y-1
-              "
-            >
-
-              <h2
-                className="
-                  text-xl
-                  font-bold
-                  text-gray-800
-                "
-              >
-                Inventory Overview
-              </h2>
-
-              <p
-                className="
-                  text-gray-500
-                  text-sm
-                  mt-1
-                "
-              >
-                Current inventory status
-              </p>
-
-              <div
-                className="
-                  grid
-                  grid-cols-2
-                  gap-4
-                  mt-6
-                "
-              >
-
-                {/* TOTAL PRODUCTS */}
-
-                <div
-                  className="
-                    bg-blue-50
-                    rounded-lg
-                    p-5
-                    transition-all
-                    duration-300
-                    hover:-translate-y-1
-                    hover:shadow-md
-                    hover:bg-blue-100
-                    cursor-pointer
-                  "
-                >
-
-                  <p
-                    className="
-                      text-gray-500
-                      text-sm
-                    "
-                  >
-                    Total Products
-                  </p>
-
-                  <h3
-                    className="
-                      text-2xl
-                      font-bold
-                      text-blue-600
-                      mt-2
-                    "
-                  >
-                    {totalProducts}
-                  </h3>
-
-                </div>
-
-                {/* LOW STOCK */}
-
-                <div
-                  className="
-                    bg-yellow-50
-                    rounded-lg
-                    p-5
-                    transition-all
-                    duration-300
-                    hover:-translate-y-1
-                    hover:shadow-md
-                    hover:bg-yellow-100
-                    cursor-pointer
-                  "
-                >
-
-                  <p
-                    className="
-                      text-gray-500
-                      text-sm
-                    "
-                  >
-                    Low Stock
-                  </p>
-
-                  <h3
-                    className="
-                      text-2xl
-                      font-bold
-                      text-yellow-600
-                      mt-2
-                    "
-                  >
-                    {lowStockProducts}
-                  </h3>
-
-                </div>
-
-                {/* OUT OF STOCK */}
-
-                <div
-                  className="
-                    bg-red-50
-                    rounded-lg
-                    p-5
-                    transition-all
-                    duration-300
-                    hover:-translate-y-1
-                    hover:shadow-md
-                    hover:bg-red-100
-                    cursor-pointer
-                  "
-                >
-
-                  <p
-                    className="
-                      text-gray-500
-                      text-sm
-                    "
-                  >
-                    Out of Stock
-                  </p>
-
-                  <h3
-                    className="
-                      text-2xl
-                      font-bold
-                      text-red-600
-                      mt-2
-                    "
-                  >
-                    {outOfStockProducts}
-                  </h3>
-
-                </div>
-
-                {/* AVAILABLE UNITS */}
-
-                <div
-                  className="
-                    bg-green-50
-                    rounded-lg
-                    p-5
-                    transition-all
-                    duration-300
-                    hover:-translate-y-1
-                    hover:shadow-md
-                    hover:bg-green-100
-                    cursor-pointer
-                  "
-                >
-
-                  <p
-                    className="
-                      text-gray-500
-                      text-sm
-                    "
-                  >
-                    Available Units
-                  </p>
-
-                  <h3
-                    className="
-                      text-2xl
-                      font-bold
-                      text-green-600
-                      mt-2
-                    "
-                  >
-                    {totalUnits}
-                  </h3>
-
-                </div>
-
-              </div>
-
-            </div>
-
-          </div>
-
-          {/* ============================= */}
-          {/* QUICK STORE SUMMARY */}
-          {/* ============================= */}
-
-          <div
-            className="
-              mt-6
-              bg-white/90
-              backdrop-blur-xl
-              border border-white/40
-              rounded-xl
-              shadow-xl
-              p-5
-              sm:p-6
-              transition-all
-              duration-300
-              hover:shadow-2xl
-            "
-          >
-
-            <div
-              className="
-                flex
-                flex-col
-                sm:flex-row
-                sm:items-center
-                sm:justify-between
-                gap-4
-              "
-            >
-
-              {/* SUMMARY TEXT */}
-
-              <div>
-
-                <h2
-                  className="
-                    text-lg
-                    font-bold
-                    text-gray-800
-                  "
-                >
-                  Store Summary
-                </h2>
-
-                <p
-                  className="
-                    text-sm
-                    text-gray-500
-                    mt-1
-                  "
-                >
-                  Live overview from your
-                  RetailIQ data.
-                </p>
-
-              </div>
-
-              {/* SUMMARY VALUES */}
-
-              <div
-                className="
-                  grid
-                  grid-cols-2
-                  gap-3
-                "
-              >
-
-                {/* REVENUE */}
-
-                <div
-                  className="
-                    bg-blue-50/80
-                    rounded-xl
-                    px-4
-                    py-3
-                  "
-                >
-
-                  <p
-                    className="
-                      text-xs
-                      text-gray-500
-                    "
-                  >
-                    Revenue
-                  </p>
-
-                  <p
-                    className="
-                      font-bold
-                      text-blue-600
-                      mt-1
-                    "
-                  >
-                    ₹
-                    {totalRevenue.toLocaleString(
-                      "en-IN"
-                    )}
-                  </p>
-
-                </div>
-
-                {/* UNITS */}
-
-                <div
-                  className="
-                    bg-emerald-50/80
-                    rounded-xl
-                    px-4
-                    py-3
-                  "
-                >
-
-                  <p
-                    className="
-                      text-xs
-                      text-gray-500
-                    "
-                  >
-                    Units
-                  </p>
-
-                  <p
-                    className="
-                      font-bold
-                      text-emerald-600
-                      mt-1
-                    "
-                  >
-                    {totalUnits}
-                  </p>
-
-                </div>
-
-              </div>
-
-            </div>
-
-          </div>
-
-        </main>
-
-      </div>
-
-    </div>
+    <Routes>
+      <Route
+        path="/"
+        element={<Navigate to="/dashboard" replace />}
+      />
+
+      <Route
+        path="/dashboard"
+        element={pageLayout(
+          <Dashboard products={products} sales={sales} />
+        )}
+      />
+
+      <Route
+        path="/inventory"
+        element={pageLayout(
+          <Inventory
+            products={products}
+            updateProductStock={updateProductStock}
+            addProduct={addProduct}
+            updateProduct={updateProduct}
+            deleteProduct={deleteProduct}
+          />
+        )}
+      />
+
+      <Route
+        path="/sales"
+        element={pageLayout(
+          <Sales
+            products={products}
+            sales={sales}
+            setSales={setSales}
+            updateProductStock={updateProductStock}
+          />
+        )}
+      />
+
+      <Route
+        path="/forecast"
+        element={pageLayout(
+          <Forecast products={products} sales={sales} />
+        )}
+      />
+
+      <Route
+        path="/anomalies"
+        element={pageLayout(
+          <Anomalies products={products} sales={sales} />
+        )}
+      />
+
+      <Route
+        path="/smart-restock"
+        element={pageLayout(
+          <SmartRestock products={products} sales={sales} />
+        )}
+      />
+
+      <Route
+        path="/ai-assistant"
+        element={pageLayout(
+          <AIAssistant
+            products={products}
+            sales={sales}
+            onNavigate={(page) => navigate(`/${page}`)}
+          />
+        )}
+      />
+
+      <Route
+        path="/voice-billing"
+        element={pageLayout(
+          <VoiceBilling
+            products={products}
+            onCompleteSale={completeVoiceSale}
+          />
+        )}
+      />
+
+      <Route
+        path="/invoice-scanner"
+        element={pageLayout(
+          <InvoiceScanner
+            onAddToInventory={addInvoiceItemsToInventory}
+          />
+        )}
+      />
+
+      <Route
+        path="/employees"
+        element={pageLayout(<Employees />)}
+      />
+
+      <Route
+        path="/analytics"
+        element={pageLayout(
+          <Analytics sales={sales} products={products} />
+        )}
+      />
+
+      <Route
+        path="/settings"
+        element={pageLayout(<Settings />)}
+      />
+
+      <Route
+        path="*"
+        element={<Navigate to="/dashboard" replace />}
+      />
+    </Routes>
+  );
+}
+
+function ProtectedApp() {
+  const [loggedIn, setLoggedIn] = useState(!!session.token);
+
+  useEffect(() => {
+    const syncSession = () => setLoggedIn(!!session.token);
+
+    window.addEventListener("storage", syncSession);
+
+    return () => {
+      window.removeEventListener("storage", syncSession);
+    };
+  }, []);
+
+  if (!loggedIn) {
+    return <Navigate to="/login" replace />;
+  }
+
+  return <AppContent />;
+}
+
+function PublicRoutes() {
+  return (
+    <Routes>
+      <Route
+        path="/login"
+        element={
+          <Login
+            onLogin={() => {
+              window.dispatchEvent(new Event("retailiq:auth"));
+            }}
+            onSignup={() => {
+              window.history.pushState({}, "", "/signup");
+              window.dispatchEvent(new PopStateEvent("popstate"));
+            }}
+          />
+        }
+      />
+
+      <Route
+        path="/signup"
+        element={
+          <Signup
+            onBackToLogin={() => {
+              window.history.pushState({}, "", "/login");
+              window.dispatchEvent(new PopStateEvent("popstate"));
+            }}
+            onSignup={() => {
+              window.history.pushState({}, "", "/login");
+              window.dispatchEvent(new PopStateEvent("popstate"));
+            }}
+          />
+        }
+      />
+
+      <Route path="*" element={<Navigate to="/login" replace />} />
+    </Routes>
+  );
+}
+
+function SetPasswordRoute() {
+  return <SetPassword />;
+}
+
+function RootRoutes() {
+  const [loggedIn, setLoggedIn] = useState(!!session.token);
+
+  useEffect(() => {
+    const syncSession = () => setLoggedIn(!!session.token);
+
+    window.addEventListener("retailiq:auth", syncSession);
+    window.addEventListener("storage", syncSession);
+
+    return () => {
+      window.removeEventListener("retailiq:auth", syncSession);
+      window.removeEventListener("storage", syncSession);
+    };
+  }, []);
+
+  return (
+    <Routes>
+      <Route path="/set-password" element={<SetPasswordRoute />} />
+
+      <Route
+        path="/*"
+        element={
+          loggedIn ? <ProtectedApp /> : <PublicRoutes />
+        }
+      />
+    </Routes>
+  );
+}
+
+function App() {
+  return (
+    <BrowserRouter>
+      <RootRoutes />
+    </BrowserRouter>
   );
 }
 

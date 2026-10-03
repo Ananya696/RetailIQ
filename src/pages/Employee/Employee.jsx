@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { api } from "../../api";
 import {
   Users,
   UserPlus,
@@ -6,8 +7,6 @@ import {
   ShieldCheck,
   UserCog,
   UserX,
-  Pencil,
-  Trash2,
   X,
   Mail,
   Phone,
@@ -19,27 +18,10 @@ import {
 } from "lucide-react";
 
 function Employee() {
-  const [employees, setEmployees] = useState([
-    {
-      id: 1001,
-      name: "Rahul Sharma",
-      phone: "9876543210",
-      email: "rahul@retailiq.com",
-      role: "Manager",
-      status: "Active",
-      joined: "12 Aug 2026",
-    },
-    {
-      id: 1002,
-      name: "Priya Singh",
-      phone: "9123456780",
-      email: "priya@retailiq.com",
-      role: "Employee",
-      status: "Active",
-      joined: "18 Aug 2026",
-    },
-
-  ]);
+  const [employees, setEmployees] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [inviteLink, setInviteLink] = useState("");
 
   const [searchTerm, setSearchTerm] = useState("");
   const [roleFilter, setRoleFilter] = useState("All");
@@ -60,6 +42,49 @@ function Employee() {
   };
 
   const [form, setForm] = useState(emptyForm);
+
+  // ========================================
+  // STAFF API
+  // ========================================
+
+  const mapStaffMember = (staff) => ({
+    id: staff.id,
+    name: staff.name || staff.email || "Staff Member",
+    phone: staff.phone || "-",
+    email: staff.email || "-",
+    role: staff.role || "Employee",
+    status: staff.isActive === false ? "Inactive" : "Active",
+    joined: staff.createdAt
+      ? new Date(staff.createdAt).toLocaleDateString("en-IN", {
+          day: "2-digit",
+          month: "short",
+          year: "numeric",
+        })
+      : "-",
+  });
+
+  const loadEmployees = async () => {
+    setLoading(true);
+    setError("");
+
+    try {
+      const data = await api("/api/staff");
+      const staffList = Array.isArray(data)
+        ? data
+        : data.staff || data.users || [];
+
+      setEmployees(staffList.map(mapStaffMember));
+    } catch (err) {
+      console.error("Failed to load staff:", err);
+      setError(err.message || "Failed to load employees.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    loadEmployees();
+  }, []);
 
   // ========================================
   // FILTER
@@ -122,20 +147,14 @@ function Employee() {
   // ADD
   // ========================================
 
-  const handleAddEmployee = (event) => {
+  const handleAddEmployee = async (event) => {
     event.preventDefault();
 
     const name = form.name.trim();
-    const phone = form.phone.trim();
     const email = form.email.trim();
 
     if (!name) {
       alert("Please enter employee name.");
-      return;
-    }
-
-    if (!/^\d{10}$/.test(phone)) {
-      alert("Please enter a valid 10-digit phone number.");
       return;
     }
 
@@ -144,104 +163,33 @@ function Employee() {
       return;
     }
 
-    const newEmployee = {
-      id: Date.now(),
-      name,
-      phone,
-      email,
-      role: form.role,
-      status: form.status,
-      joined: new Date().toLocaleDateString("en-IN", {
-        day: "2-digit",
-        month: "short",
-        year: "numeric",
-      }),
-    };
+    setError("");
 
-    setEmployees((current) => [...current, newEmployee]);
+    try {
+      const data = await api("/api/invite-staff", {
+        method: "POST",
+        body: {
+          name,
+          email,
+          role: form.role,
+        },
+      });
 
-    resetForm();
-    setShowAddModal(false);
-  };
+      const returnedInviteLink =
+        data.inviteLink || data.link || data.invite?.inviteLink || "";
 
-  // ========================================
-  // EDIT
-  // ========================================
+      setInviteLink(returnedInviteLink);
+      resetForm();
+      setShowAddModal(false);
+      await loadEmployees();
 
-  const openEditModal = (employee) => {
-    setSelectedEmployee(employee);
-
-    setForm({
-      name: employee.name,
-      phone: employee.phone,
-      email: employee.email,
-      role: employee.role,
-      status: employee.status,
-    });
-
-    setShowEditModal(true);
-  };
-
-  const handleEditEmployee = (event) => {
-    event.preventDefault();
-
-    const name = form.name.trim();
-    const phone = form.phone.trim();
-    const email = form.email.trim();
-
-    if (!name) {
-      alert("Please enter employee name.");
-      return;
+      if (!returnedInviteLink) {
+        setError("Employee invited successfully, but no invite link was returned.");
+      }
+    } catch (err) {
+      console.error("Failed to invite employee:", err);
+      setError(err.message || "Failed to invite employee.");
     }
-
-    if (!/^\d{10}$/.test(phone)) {
-      alert("Please enter a valid 10-digit phone number.");
-      return;
-    }
-
-    if (!email || !email.includes("@")) {
-      alert("Please enter a valid email address.");
-      return;
-    }
-
-    setEmployees((current) =>
-      current.map((employee) =>
-        employee.id === selectedEmployee.id
-          ? {
-              ...employee,
-              name,
-              phone,
-              email,
-              role: form.role,
-              status: form.status,
-            }
-          : employee
-      )
-    );
-
-    resetForm();
-    setSelectedEmployee(null);
-    setShowEditModal(false);
-  };
-
-  // ========================================
-  // DELETE
-  // ========================================
-
-  const openDeleteModal = (employee) => {
-    setSelectedEmployee(employee);
-    setShowDeleteModal(true);
-  };
-
-  const confirmDelete = () => {
-    if (!selectedEmployee) return;
-
-    setEmployees((current) =>
-      current.filter((employee) => employee.id !== selectedEmployee.id)
-    );
-
-    setSelectedEmployee(null);
-    setShowDeleteModal(false);
   };
 
   // ========================================
@@ -352,6 +300,31 @@ function Employee() {
 
         </div>
       </div>
+
+      {error && (
+        <div className="mb-5 rounded-2xl border border-red-400/20 bg-red-500/10 px-4 py-3 text-sm text-red-200">
+          {error}
+        </div>
+      )}
+
+      {inviteLink && (
+        <div className="mb-5 rounded-2xl border border-emerald-400/20 bg-emerald-500/10 p-4">
+          <p className="text-sm font-semibold text-emerald-200">
+            Employee invitation created successfully.
+          </p>
+          <p className="mt-1 text-xs text-white/50">
+            Share this link with the invited employee so they can set their password.
+          </p>
+          <a
+            href={inviteLink}
+            target="_blank"
+            rel="noreferrer"
+            className="mt-3 block break-all rounded-xl bg-black/20 px-3 py-2 text-sm text-cyan-300 underline underline-offset-2"
+          >
+            {inviteLink}
+          </a>
+        </div>
+      )}
 
       {/* ========================================
           STATS
@@ -527,6 +500,12 @@ function Employee() {
           DESKTOP TABLE
       ======================================== */}
 
+      {loading ? (
+        <div className="rounded-3xl border border-white/10 bg-slate-950/55 p-12 text-center text-sm text-white/50">
+          Loading employees...
+        </div>
+      ) : (
+        <>
       <div className="
         hidden lg:block
         bg-slate-950/55
@@ -716,47 +695,9 @@ function Employee() {
 
                     <td className="px-5 py-5">
 
-                      <div className="flex gap-2">
-
-                        <button
-                          onClick={() => openEditModal(employee)}
-                          className="
-                            inline-flex items-center gap-1.5
-                            px-3 py-2
-                            rounded-xl
-                            bg-blue-500/10
-                            text-blue-300
-                            border border-blue-400/10
-                            text-xs font-semibold
-                            hover:bg-blue-500/20
-                            hover:border-blue-400/20
-                            transition-all
-                          "
-                        >
-                          <Pencil className="w-3.5 h-3.5" />
-                          Edit
-                        </button>
-
-                        <button
-                          onClick={() => openDeleteModal(employee)}
-                          className="
-                            inline-flex items-center gap-1.5
-                            px-3 py-2
-                            rounded-xl
-                            bg-red-500/10
-                            text-red-300
-                            border border-red-400/10
-                            text-xs font-semibold
-                            hover:bg-red-500/20
-                            hover:border-red-400/20
-                            transition-all
-                          "
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                          Delete
-                        </button>
-
-                      </div>
+                      <span className="text-xs text-white/35">
+                        API managed
+                      </span>
 
                     </td>
 
@@ -897,48 +838,8 @@ function Employee() {
 
               </div>
 
-              <div className="flex gap-3 mt-5">
-
-                <button
-                  onClick={() => openEditModal(employee)}
-                  className="
-                    flex-1
-                    inline-flex items-center justify-center gap-2
-                    py-2.5
-                    rounded-xl
-                    bg-blue-500/10
-                    border border-blue-400/10
-                    text-blue-300
-                    font-semibold
-                    text-sm
-                    hover:bg-blue-500/20
-                    transition-all
-                  "
-                >
-                  <Pencil className="w-4 h-4" />
-                  Edit
-                </button>
-
-                <button
-                  onClick={() => openDeleteModal(employee)}
-                  className="
-                    flex-1
-                    inline-flex items-center justify-center gap-2
-                    py-2.5
-                    rounded-xl
-                    bg-red-500/10
-                    border border-red-400/10
-                    text-red-300
-                    font-semibold
-                    text-sm
-                    hover:bg-red-500/20
-                    transition-all
-                  "
-                >
-                  <Trash2 className="w-4 h-4" />
-                  Delete
-                </button>
-
+              <div className="mt-5 rounded-xl border border-white/[0.07] bg-white/[0.03] px-3 py-2 text-center text-xs text-white/35">
+                Staff details are managed through the backend invitation flow.
               </div>
 
             </div>
@@ -954,6 +855,8 @@ function Employee() {
         )}
 
       </div>
+        </>
+      )}
 
       {/* ========================================
           ADD MODAL
@@ -974,128 +877,6 @@ function Employee() {
             submitText="Add Employee"
           />
         </Modal>
-      )}
-
-      {/* ========================================
-          EDIT MODAL
-      ======================================== */}
-
-      {showEditModal && (
-        <Modal
-          title="Edit Employee"
-          subtitle="Update employee information and access."
-          icon={<Pencil className="w-5 h-5" />}
-          onClose={closeEditModal}
-        >
-          <EmployeeForm
-            form={form}
-            onChange={handleChange}
-            onSubmit={handleEditEmployee}
-            onCancel={closeEditModal}
-            submitText="Save Changes"
-          />
-        </Modal>
-      )}
-
-      {/* ========================================
-          DELETE MODAL
-      ======================================== */}
-
-      {showDeleteModal && selectedEmployee && (
-
-        <div className="
-          fixed inset-0 z-[100]
-          bg-black/70
-          backdrop-blur-md
-          flex items-center justify-center
-          p-4
-        ">
-
-          <div className="
-            w-full max-w-md
-            bg-slate-950
-            border border-white/10
-            rounded-3xl
-            shadow-2xl shadow-black/50
-            p-6 sm:p-8
-            animate-[fadeIn_0.25s_ease-out]
-          ">
-
-            <div className="
-              w-16 h-16
-              mx-auto
-              rounded-2xl
-              bg-red-500/10
-              border border-red-400/15
-              flex items-center justify-center
-              mb-5
-            ">
-              <Trash2 className="w-7 h-7 text-red-300" />
-            </div>
-
-            <div className="text-center">
-
-              <h2 className="text-xl sm:text-2xl font-bold text-white">
-                Delete Employee?
-              </h2>
-
-              <p className="text-sm text-white/50 mt-3">
-                You are about to delete{" "}
-                <span className="font-semibold text-white">
-                  {selectedEmployee.name}
-                </span>
-                .
-              </p>
-
-              <p className="text-xs text-white/30 mt-2">
-                This action cannot be undone.
-              </p>
-
-            </div>
-
-            <div className="flex flex-col-reverse sm:flex-row gap-3 mt-7">
-
-              <button
-                onClick={closeDeleteModal}
-                className="
-                  flex-1
-                  border border-white/10
-                  bg-white/5
-                  text-white/60
-                  py-3
-                  rounded-xl
-                  font-semibold
-                  hover:bg-white/10
-                  hover:text-white
-                  transition-all
-                "
-              >
-                Cancel
-              </button>
-
-              <button
-                onClick={confirmDelete}
-                className="
-                  flex-1
-                  bg-gradient-to-r from-red-500 to-rose-600
-                  text-white
-                  py-3
-                  rounded-xl
-                  font-semibold
-                  shadow-lg shadow-red-500/20
-                  hover:from-red-400
-                  hover:to-rose-500
-                  transition-all
-                "
-              >
-                Delete Employee
-              </button>
-
-            </div>
-
-          </div>
-
-        </div>
       )}
 
     </div>
