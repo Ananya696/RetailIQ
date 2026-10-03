@@ -6,12 +6,18 @@
 
 generator client {
   provider = "prisma-client-js"
-  output   = "../../backend/node_modules/.prisma/client"
 }
 
 datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
+}
+
+enum PaymentMethod {
+  CASH
+  CARD
+  UPI
+  OTHER
 }
 
 model Role {
@@ -35,6 +41,10 @@ model User {
   isActive     Boolean  @default(false)
   inviteToken  String?  @unique
 
+  inviteExpiresAt DateTime?
+  employeeCode    String?    @unique
+  aiReports       AIReport[] @relation("ReportAuthor")
+
   sales        Sale[]
   createdAt    DateTime @default(now())
 }
@@ -43,8 +53,10 @@ model Product {
   id             Int          @id @default(autoincrement())
   name           String
   category       String?
-  price          Float
-  cost           Float?       // NEW: cost price — store ne kitne mein khareeda
+  price          Decimal      @db.Decimal(10, 2)
+  cost           Decimal?     @db.Decimal(10, 2)       // cost price — store ne kitne mein khareeda
+  supplier       String?
+  isArchived     Boolean      @default(false)
   isPerishable   Boolean      @default(false)
   shelfLifeDays  Int?
   stock          Stock?
@@ -64,31 +76,43 @@ model Stock {
 }
 
 model Sale {
-  id           Int      @id @default(autoincrement())
-  productId    Int
-  product      Product  @relation(fields: [productId], references: [id])
-  soldById     Int
-  soldBy       User     @relation(fields: [soldById], references: [id])
-  quantitySold Int
-  salePrice    Float
-  isAnomaly    Boolean  @default(false)
-  saleDate     DateTime @default(now())
+  id            Int           @id @default(autoincrement())
+  productId     Int
+  product       Product       @relation(fields: [productId], references: [id])
+  soldById      Int
+  soldBy        User          @relation(fields: [soldById], references: [id])
+  quantitySold  Int
+  salePrice     Decimal       @db.Decimal(10, 2)
+  paymentMethod PaymentMethod @default(CASH)
+  anomalyScore  Float?
+  anomalyReason String?
+  isAnomaly     Boolean       @default(false)
+  saleDate      DateTime      @default(now())
+
+  @@index([productId, saleDate])
+  @@index([soldById, saleDate])
 }
 
 model Prediction {
   id             Int      @id @default(autoincrement())
   productId      Int
   product        Product  @relation(fields: [productId], references: [id])
+  storeId        Int?
   predictedSales Int
   predictionDate DateTime
   forDate        DateTime
   createdAt      DateTime @default(now())
+
+  @@index([productId, forDate])
 }
 
 model AIReport {
-  id          Int      @id @default(autoincrement())
-  title       String
-  content     String
-  generatedBy Int
-  createdAt   DateTime @default(now())
+  id              Int      @id @default(autoincrement())
+  title           String
+  content         String
+  generatedBy     Int
+  generatedByUser User     @relation("ReportAuthor", fields: [generatedBy], references: [id])
+  createdAt       DateTime @default(now())
+
+  @@index([generatedBy])
 }
