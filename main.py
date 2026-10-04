@@ -1,3 +1,4 @@
+
 """
 RetailIQ GenAI Service — Member 3 (GenAI Business Intelligence)
 
@@ -20,14 +21,20 @@ Then test at:
 import os
 import shutil
 import tempfile
+import uuid
 
 import whisper
 from dotenv import load_dotenv
-from fastapi import FastAPI, File, UploadFile, Form, HTTPException
+from fastapi import FastAPI, File, UploadFile, Form, HTTPException , Depends, Header
 from fastapi.responses import FileResponse
 from google import genai
 from gtts import gTTS
-from pydantic import BaseModel
+from pydantic import BaseModel 
+
+def require_key(x_internal_key: str = Header(default="")):
+    key = os.getenv("INTERNAL_KEY", "")
+    if key and x_internal_key != key:
+        raise HTTPException(401, "unauthorized")
 
 # ---------------------------------------------------------------------------
 # Setup — runs once when the server starts
@@ -45,7 +52,7 @@ if not GEMINI_API_KEY:
 client = genai.Client(api_key=GEMINI_API_KEY)
 
 print("Loading Whisper model (small)... this happens once, at startup.")
-whisper_model = whisper.load_model("tiny")
+whisper_model = whisper.load_model(os.getenv("WHISPER_MODEL", "base"))
 print("Whisper model loaded.")
 
 app = FastAPI(
@@ -106,7 +113,7 @@ Question: {question}
 Answer:
 """
     response = client.models.generate_content(
-        model="gemini-3.6-flash",
+        model=os.getenv("GEMINI_MODEL", "gemini-3.6-flash"),
         contents=prompt,
     )
     return response.text
@@ -129,7 +136,7 @@ Business Data:
 Generate the {period} report:
 """
     response = client.models.generate_content(
-        model="gemini-3.6-flash",
+        model=os.getenv("GEMINI_MODEL", "gemini-3.6-flash"),
         contents=prompt,
     )
     return response.text
@@ -166,13 +173,14 @@ Question: {question_text}
 Answer (in {language}):
 """
     response = client.models.generate_content(
-        model="gemini-3.6-flash",
+        model=os.getenv("GEMINI_MODEL", "gemini-3.6-flash"),
         contents=prompt,
     )
     answer_text = response.text
 
     # Step 3: Text to speech
-    output_path = os.path.join(tempfile.gettempdir(), f"assistant_response_{language}.mp3")
+    import uuid
+    
     gTTS(text=answer_text, lang=language).save(output_path)
 
     return {
@@ -192,7 +200,7 @@ def health_check():
     return {"status": "ok"}
 
 
-@app.post("/assistant", response_model=AssistantResponse)
+@app.post("/assistant", response_model=AssistantResponse, dependencies=[Depends(require_key)])
 def assistant_endpoint(payload: AssistantRequest):
     """
     Answer a retailer's business question using the supplied business_data.
@@ -210,7 +218,7 @@ def assistant_endpoint(payload: AssistantRequest):
         raise HTTPException(status_code=500, detail=str(exc))
 
 
-@app.post("/report", response_model=ReportResponse)
+@app.post("/report", response_model=ReportResponse, dependencies=[Depends(require_key)])
 def report_endpoint(payload: ReportRequest):
     """
     Generate a daily/weekly/monthly business report.
@@ -228,7 +236,7 @@ def report_endpoint(payload: ReportRequest):
         raise HTTPException(status_code=500, detail=str(exc))
 
 
-@app.post("/voice")
+@app.post("/voice", dependencies=[Depends(require_key)])
 async def voice_endpoint(
     audio: UploadFile = File(..., description="Voice recording (.ogg, .mp3, .wav, etc.)"),
     business_data: str = Form(..., description="JSON string of the business data"),
@@ -266,9 +274,14 @@ async def voice_endpoint(
     with open(result["audio_file"], "rb") as f:
         audio_bytes = f.read()
     audio_base64 = base64.b64encode(audio_bytes).decode("utf-8")
+    os.remove(result["audio_file"])
+    
 
     return {
         "question_text": result["question_text"],
         "answer_text": result["answer_text"],
         "audio_base64": audio_base64,
     }
+   
+
+
